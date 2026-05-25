@@ -1,0 +1,24 @@
+========================================================================
+TickForge vs LOBSTER -- Correctness Validation
+========================================================================
+
+Check 1: seed-only replay vs LOBSTER orderbook[0]
+  events_processed: 20
+  bid mismatches: 0/10
+  ask mismatches: 0/10
+  result: PASS -- engine and adapter are correct
+
+Check 2: full-day replay vs LOBSTER orderbook[end] (row 400390)
+  events_processed: 389078
+  rejected_events:  4518
+  throughput:       11761906.92 events/sec
+  latency p50/p95/p99: 42.00 / 84.00 / 125.00 ns
+  bid mismatches: 10/10
+  ask mismatches: 10/10
+  note: end-of-session divergence on LEVEL-N data is EXPECTED.
+        LOBSTER's level-N message file omits events that fall
+        outside the top-N range, so a perfect reconstruction is
+        not achievable without full-depth data. See:
+        https://data.lobsterdata.com/info/HowDoesItWork.php
+
+========================================================================

@@ -1,0 +1,29 @@
+build/
+build-profile/
+
+reports/*
+!reports/.gitkeep
+!reports/PROFILING.md
+!reports/benchmark_numbers.txt
+!reports/profile.json.gz
+!reports/profile.json.syms.json
+!reports/flame.svg
+!reports/aapl_2012-06-21_findings.md
+!reports/aapl_2012-06-21_validation.txt
+
+# Only the canonical sample ships in git. Everything else under data/ is
+# either generated (synthetic_*.csv), large, or derived from license-restricted
+# sources (LOBSTER). Whitelist sample_events.csv and ignore the rest.
+data/*
+!data/sample_events.csv
+
+# Belt-and-braces: these patterns also exclude LOBSTER raw files (academic
+# license restricts redistribution) and TickForge-format derivatives of them
+# wherever they live. Do NOT commit converted LOBSTER CSVs.
+*_message_*.csv
+*_orderbook_*.csv
+*_seed_only.csv
+
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,1047 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1400" height="318" onload="init(evt)" viewBox="0 0 1400 318" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs >
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	.func_g:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	var details, searchbtn, matchedtxt, svg;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+	}
+
+	// mouse-over for info
+	function s(node) {		// show
+		info = g_to_text(node);
+		details.nodeValue = "Function: " + info;
+	}
+	function c() {			// clear
+		details.nodeValue = ' ';
+	}
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	})
+
+	// functions
+	function find_child(parent, name, attr) {
+		var children = parent.childNodes;
+		for (var i=0; i<children.length;i++) {
+			if (children[i].tagName == name)
+				return (attr != undefined) ? children[i].attributes[attr].value : children[i];
+		}
+		return;
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_"+attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_"+attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_"+attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes["width"].value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2*12*0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x=txt.length-2; x>0; x--) {
+			if (t.getSubStringLength(0, x+2) <= w) {
+				t.textContent = txt.substring(0,x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = (parseFloat(e.attributes["x"].value) - x - 10) * ratio + 10;
+				if(e.tagName == "text") e.attributes["x"].value = find_child(e.parentNode, "rect", "x") + 3;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseFloat(e.attributes["width"].value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_child(c[i], x-10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = 10;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseInt(svg.width.baseVal.value) - (10*2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr["width"].value);
+		var xmin = parseFloat(attr["x"].value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr["y"].value);
+		var ratio = (svg.width.baseVal.value - 2*10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "1.0";
+
+		var el = document.getElementsByTagName("g");
+		for(var i=0;i<el.length;i++){
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a["x"].value);
+			var ew = parseFloat(a["width"].value);
+			// Is it an ancestor
+			if (0 == 0) {
+				var upstack = parseFloat(a["y"].value) > ymin;
+			} else {
+				var upstack = parseFloat(a["y"].value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.style["opacity"] = "0.5";
+					zoom_parent(e);
+					e.onclick = function(e){unzoom(); zoom(this);};
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.style["display"] = "none";
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.style["display"] = "none";
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					e.onclick = function(e){zoom(this);};
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "0.0";
+
+		var el = document.getElementsByTagName("g");
+		for(i=0;i<el.length;i++) {
+			el[i].style["display"] = "block";
+			el[i].style["opacity"] = "1";
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}
+
+	// search
+	function reset_search() {
+		var el = document.getElementsByTagName("rect");
+		for (var i=0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)", "");
+			if (term != null) {
+				search(term)
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			searchbtn.style["opacity"] = "0.1";
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.style["opacity"] = "0.0";
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		var re = new RegExp(term);
+		var el = document.getElementsByTagName("g");
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			if (e.attributes["class"].value != "func_g")
+				continue;
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (rect == null) {
+				// the rect might be wrapped in an anchor
+				// if nameattr href is being used
+				if (rect = find_child(e, "a")) {
+				    rect = find_child(r, "rect");
+				}
+			}
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes["width"].value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes["x"].value);
+				orig_save(rect, "fill");
+				rect.attributes["fill"].value =
+				    "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.style["opacity"] = "1.0";
+		searchbtn.firstChild.nodeValue = "Reset Search"
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.style["opacity"] = "1.0";
+		pct = 100 * count / maxwidth;
+		if (pct == 100)
+			pct = "100"
+		else
+			pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+	function searchover(e) {
+		searchbtn.style["opacity"] = "1.0";
+	}
+	function searchout(e) {
+		if (searching) {
+			searchbtn.style["opacity"] = "1.0";
+		} else {
+			searchbtn.style["opacity"] = "0.1";
+		}
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1400.0" height="318.0" fill="url(#background)"  />
+<text text-anchor="middle" x="700.00" y="24" font-size="17" font-family="Verdana" fill="rgb(0,0,0)"  >TickForge replay hot path (10M synthetic events)</text>
+<text text-anchor="middle" x="700.00" y="48" font-size="12" font-family="Verdana" fill="rgb(160,160,160)"  >Apple M2, RelWithDebInfo, macOS sample(1) at 1 kHz, rendered with Brendan Gregg's flamegraph.pl</text>
+<text text-anchor="" x="10.00" y="301" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="details" > </text>
+<text text-anchor="" x="10.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>
+<text text-anchor="" x="1290.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>
+<text text-anchor="" x="1290.00" y="301" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="matched" > </text>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_timebase_info (4 samples, 0.05%)</title><rect x="1061.4" y="157" width="0.6" height="15.0" fill="rgb(248,120,120)" rx="2" ry="2" />
+<text text-anchor="" x="1064.35" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`clock_gettime_nsec_np (1 samples, 0.01%)</title><rect x="1062.0" y="173" width="0.2" height="15.0" fill="rgb(244,114,114)" rx="2" ry="2" />
+<text text-anchor="" x="1065.01" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc_tiny (23 samples, 0.27%)</title><rect x="1137.4" y="141" width="3.8" height="15.0" fill="rgb(245,116,116)" rx="2" ry="2" />
+<text text-anchor="" x="1140.43" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`DYLD-STUB$$malloc_type_malloc (6 samples, 0.07%)</title><rect x="108.8" y="157" width="0.9" height="15.0" fill="rgb(208,62,62)" rx="2" ry="2" />
+<text text-anchor="" x="111.76" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (4 samples, 0.05%)</title><rect x="10.0" y="221" width="0.7" height="15.0" fill="rgb(218,76,76)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="231.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::vector&lt;tickforge::MarketEvent&gt;::push_back[abi:nqe210106](tickforge::MarketEvent.const&amp;) (6 samples, 0.07%)</title><rect x="52.7" y="189" width="1.0" height="15.0" fill="rgb(186,186,54)" rx="2" ry="2" />
+<text text-anchor="" x="55.72" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_chunk_list_push (2 samples, 0.02%)</title><rect x="1388.0" y="141" width="0.4" height="15.0" fill="rgb(203,54,54)" rx="2" ry="2" />
+<text text-anchor="" x="1391.03" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::add_depth(tickforge::Side,.long (22 samples, 0.26%)</title><rect x="1302.4" y="173" width="3.6" height="15.0" fill="rgb(208,208,62)" rx="2" ry="2" />
+<text text-anchor="" x="1305.41" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::modify_order(tickforge::MarketEvent.const&amp;) (169 samples, 2.01%)</title><rect x="1064.5" y="173" width="27.7" height="15.0" fill="rgb(199,199,58)" rx="2" ry="2" />
+<text text-anchor="" x="1067.47" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >t..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$sched_yield (1 samples, 0.01%)</title><rect x="896.0" y="189" width="0.2" height="15.0" fill="rgb(200,50,50)" rx="2" ry="2" />
+<text text-anchor="" x="899.04" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::apply_event(tickforge::MarketEvent.const&amp;) (606 samples, 7.22%)</title><rect x="1101.1" y="189" width="99.6" height="15.0" fill="rgb(209,209,62)" rx="2" ry="2" />
+<text text-anchor="" x="1104.12" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc_freelist_outlined (95 samples, 1.13%)</title><rect x="1121.8" y="141" width="15.6" height="15.0" fill="rgb(249,121,121)" rx="2" ry="2" />
+<text text-anchor="" x="1124.82" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::unordered_map&lt;unsigned.long (7 samples, 0.08%)</title><rect x="1387.9" y="173" width="1.1" height="15.0" fill="rgb(201,201,59)" rx="2" ry="2" />
+<text text-anchor="" x="1390.86" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__introsort&lt;std::_ClassicAlgPolicy,.std::ranges::less, (37 samples, 0.44%)</title><rect x="396.5" y="157" width="6.1" height="15.0" fill="rgb(220,220,66)" rx="2" ry="2" />
+<text text-anchor="" x="399.49" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`&lt;deduplicated_symbol&gt; (5 samples, 0.06%)</title><rect x="1119.8" y="141" width="0.9" height="15.0" fill="rgb(233,98,98)" rx="2" ry="2" />
+<text text-anchor="" x="1122.85" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`__srefill1 (178 samples, 2.12%)</title><rect x="263.7" y="109" width="29.3" height="15.0" fill="rgb(236,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="266.72" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`DYLD-STUB$$clock_gettime (1 samples, 0.01%)</title><rect x="899.2" y="173" width="0.1" height="15.0" fill="rgb(216,73,73)" rx="2" ry="2" />
+<text text-anchor="" x="902.16" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::CsvParser::parse_stream(std::basic_istream&lt;char&gt;&amp;,.std::basic_string_view&lt;char&gt;) (2,061 samples, 24.54%)</title><rect x="54.4" y="189" width="338.6" height="15.0" fill="rgb(200,200,59)" rx="2" ry="2" />
+<text text-anchor="" x="57.37" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_replay`tickforge::CsvParser::parse_..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memmove (8 samples, 0.10%)</title><rect x="293.0" y="109" width="1.3" height="15.0" fill="rgb(240,109,109)" rx="2" ry="2" />
+<text text-anchor="" x="295.97" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$memchr (2 samples, 0.02%)</title><rect x="306.4" y="157" width="0.4" height="15.0" fill="rgb(244,114,114)" rx="2" ry="2" />
+<text text-anchor="" x="309.44" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`_pthread_start (3,005 samples, 35.78%)</title><rect x="896.2" y="221" width="493.8" height="15.0" fill="rgb(213,69,69)" rx="2" ry="2" />
+<text text-anchor="" x="899.20" y="231.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_pthread`_pthread_start</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memchr (47 samples, 0.56%)</title><rect x="298.7" y="157" width="7.7" height="15.0" fill="rgb(239,106,106)" rx="2" ry="2" />
+<text text-anchor="" x="301.72" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::getline[abi:nqe210106]&lt;char&gt;(std::basic_istream&lt;char&gt;&amp;,.std::basic_string&lt;char&gt;&amp;, (378 samples, 4.50%)</title><rect x="258.6" y="173" width="62.1" height="15.0" fill="rgb(176,176,50)" rx="2" ry="2" />
+<text text-anchor="" x="261.62" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickfo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Thread_706723.DispatchQueue_1: (2,411 samples, 28.71%)</title><rect x="10.0" y="253" width="396.2" height="15.0" fill="rgb(234,99,99)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="263.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Thread_706723.DispatchQueue_1:</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memmove (21 samples, 0.25%)</title><rect x="402.6" y="173" width="3.4" height="15.0" fill="rgb(222,82,82)" rx="2" ry="2" />
+<text text-anchor="" x="405.57" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`clock_gettime (990 samples, 11.79%)</title><rect x="899.3" y="173" width="162.7" height="15.0" fill="rgb(236,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="902.33" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_c`clock_ge..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::basic_string&lt;char&gt;::append[abi:nqe210106]&lt;char.const*, (3 samples, 0.04%)</title><rect x="258.1" y="173" width="0.5" height="15.0" fill="rgb(185,185,53)" rx="2" ry="2" />
+<text text-anchor="" x="261.13" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`DYLD-STUB$$free (16 samples, 0.19%)</title><rect x="101.9" y="173" width="2.6" height="15.0" fill="rgb(211,66,66)" rx="2" ry="2" />
+<text text-anchor="" x="104.86" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>dyld`start (2,411 samples, 28.71%)</title><rect x="10.0" y="237" width="396.2" height="15.0" fill="rgb(245,116,116)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="247.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >dyld`start</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`__bzero (10 samples, 0.12%)</title><rect x="1188.4" y="141" width="1.6" height="15.0" fill="rgb(226,88,88)" rx="2" ry="2" />
+<text text-anchor="" x="1191.37" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`malloc_type_malloc (20 samples, 0.24%)</title><rect x="148.0" y="157" width="3.3" height="15.0" fill="rgb(248,120,120)" rx="2" ry="2" />
+<text text-anchor="" x="151.03" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__hash_table&lt;std::__hash_value_type&lt;unsigned.long (535 samples, 6.37%)</title><rect x="1102.1" y="173" width="87.9" height="15.0" fill="rgb(229,229,69)" rx="2" ry="2" />
+<text text-anchor="" x="1105.10" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`malloc_type_malloc (3 samples, 0.04%)</title><rect x="1141.2" y="141" width="0.5" height="15.0" fill="rgb(240,108,108)" rx="2" ry="2" />
+<text text-anchor="" x="1144.21" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_timebase_info (12 samples, 0.14%)</title><rect x="1059.4" y="141" width="2.0" height="15.0" fill="rgb(241,109,109)" rx="2" ry="2" />
+<text text-anchor="" x="1062.38" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_segment_group_find_and_allocate_chunk (3 samples, 0.04%)</title><rect x="1136.8" y="93" width="0.5" height="15.0" fill="rgb(235,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="1139.78" y="103.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__hash_table&lt;std::__hash_value_type&lt;unsigned.long (293 samples, 3.49%)</title><rect x="1141.9" y="157" width="48.1" height="15.0" fill="rgb(210,210,62)" rx="2" ry="2" />
+<text text-anchor="" x="1144.87" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tick..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`DYLD-STUB$$_platform_bzero (5 samples, 0.06%)</title><rect x="206.4" y="157" width="0.8" height="15.0" fill="rgb(238,105,105)" rx="2" ry="2" />
+<text text-anchor="" x="209.37" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::CsvParser::parse_file(std::__fs::filesystem::path.const&amp;) (2,100 samples, 25.01%)</title><rect x="48.0" y="205" width="345.0" height="15.0" fill="rgb(213,213,64)" rx="2" ry="2" />
+<text text-anchor="" x="50.96" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_replay`tickforge::CsvParser::parse_f..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (199 samples, 2.37%)</title><rect x="12.6" y="205" width="32.7" height="15.0" fill="rgb(220,80,80)" rx="2" ry="2" />
+<text text-anchor="" x="15.63" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`&lt;deduplicated_symbol&gt; (3 samples, 0.04%)</title><rect x="401.9" y="93" width="0.5" height="15.0" fill="rgb(204,56,56)" rx="2" ry="2" />
+<text text-anchor="" x="404.91" y="103.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__bitset_partition[abi:nqe210106]&lt;std::_ClassicAlgPolicy,.unsigned (11 samples, 0.13%)</title><rect x="398.6" y="125" width="1.8" height="15.0" fill="rgb(176,176,50)" rx="2" ry="2" />
+<text text-anchor="" x="401.63" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memmove (239 samples, 2.85%)</title><rect x="330.4" y="157" width="39.3" height="15.0" fill="rgb(247,118,118)" rx="2" ry="2" />
+<text text-anchor="" x="333.43" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >lib..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_segment_group_find_and_allocate_chunk (1 samples, 0.01%)</title><rect x="1132.3" y="109" width="0.2" height="15.0" fill="rgb(229,93,93)" rx="2" ry="2" />
+<text text-anchor="" x="1135.34" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::~locale() (3 samples, 0.04%)</title><rect x="48.0" y="189" width="0.5" height="15.0" fill="rgb(226,226,68)" rx="2" ry="2" />
+<text text-anchor="" x="50.96" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Thread_706844 (3,005 samples, 35.78%)</title><rect x="896.2" y="253" width="493.8" height="15.0" fill="rgb(229,92,92)" rx="2" ry="2" />
+<text text-anchor="" x="899.20" y="263.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Thread_706844</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::~locale() (7 samples, 0.08%)</title><rect x="100.7" y="173" width="1.2" height="15.0" fill="rgb(196,196,57)" rx="2" ry="2" />
+<text text-anchor="" x="103.71" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`__bzero (2 samples, 0.02%)</title><rect x="45.0" y="189" width="0.3" height="15.0" fill="rgb(242,112,112)" rx="2" ry="2" />
+<text text-anchor="" x="48.00" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__introsort&lt;std::_ClassicAlgPolicy,.std::ranges::less, (4 samples, 0.05%)</title><rect x="401.9" y="109" width="0.7" height="15.0" fill="rgb(229,229,69)" rx="2" ry="2" />
+<text text-anchor="" x="404.91" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__from_chars_atoi[abi:nqe210106]&lt;long.long, (6 samples, 0.07%)</title><rect x="51.2" y="189" width="1.0" height="15.0" fill="rgb(203,203,60)" rx="2" ry="2" />
+<text text-anchor="" x="54.25" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`&lt;deduplicated_symbol&gt; (2 samples, 0.02%)</title><rect x="398.3" y="125" width="0.3" height="15.0" fill="rgb(208,63,63)" rx="2" ry="2" />
+<text text-anchor="" x="401.30" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_chunk_list_push (19 samples, 0.23%)</title><rect x="1229.9" y="157" width="3.2" height="15.0" fill="rgb(210,65,65)" rx="2" ry="2" />
+<text text-anchor="" x="1232.95" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`_sread (178 samples, 2.12%)</title><rect x="263.7" y="93" width="29.3" height="15.0" fill="rgb(230,94,94)" rx="2" ry="2" />
+<text text-anchor="" x="266.72" y="103.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__introsort&lt;std::_ClassicAlgPolicy,.std::ranges::less, (13 samples, 0.15%)</title><rect x="400.4" y="125" width="2.2" height="15.0" fill="rgb(219,219,66)" rx="2" ry="2" />
+<text text-anchor="" x="403.44" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`&lt;deduplicated_symbol&gt; (5 samples, 0.06%)</title><rect x="400.4" y="109" width="0.9" height="15.0" fill="rgb(221,81,81)" rx="2" ry="2" />
+<text text-anchor="" x="403.44" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::LatencyProfiler::stats(unsigned.long (79 samples, 0.94%)</title><rect x="393.0" y="189" width="13.0" height="15.0" fill="rgb(207,207,61)" rx="2" ry="2" />
+<text text-anchor="" x="396.04" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$operator.new(unsigned (1 samples, 0.01%)</title><rect x="240.5" y="173" width="0.2" height="15.0" fill="rgb(240,108,108)" rx="2" ry="2" />
+<text text-anchor="" x="243.55" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$std::ios_base::getloc().const (1 samples, 0.01%)</title><rect x="240.7" y="173" width="0.2" height="15.0" fill="rgb(184,184,53)" rx="2" ry="2" />
+<text text-anchor="" x="243.71" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::use_facet(std::locale::id&amp;).const (12 samples, 0.14%)</title><rect x="98.7" y="173" width="2.0" height="15.0" fill="rgb(197,197,58)" rx="2" ry="2" />
+<text text-anchor="" x="101.74" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__bitset_partition[abi:nqe210106]&lt;std::_ClassicAlgPolicy,.unsigned (14 samples, 0.17%)</title><rect x="394.2" y="157" width="2.3" height="15.0" fill="rgb(181,181,52)" rx="2" ry="2" />
+<text text-anchor="" x="397.19" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_chunk_list_slot_push (21 samples, 0.25%)</title><rect x="1229.6" y="173" width="3.5" height="15.0" fill="rgb(242,112,112)" rx="2" ry="2" />
+<text text-anchor="" x="1232.62" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`DYLD-STUB$$free (2 samples, 0.02%)</title><rect x="10.7" y="205" width="0.3" height="15.0" fill="rgb(220,80,80)" rx="2" ry="2" />
+<text text-anchor="" x="13.66" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memmove (51 samples, 0.61%)</title><rect x="311.5" y="141" width="8.4" height="15.0" fill="rgb(213,69,69)" rx="2" ry="2" />
+<text text-anchor="" x="314.54" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_msg2_trap (9 samples, 0.11%)</title><rect x="45.3" y="125" width="1.5" height="15.0" fill="rgb(227,89,89)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`operator.delete(void*) (7 samples, 0.08%)</title><rect x="104.5" y="173" width="1.1" height="15.0" fill="rgb(222,82,82)" rx="2" ry="2" />
+<text text-anchor="" x="107.49" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`DYLD-STUB$$mach_timebase_info (4 samples, 0.05%)</title><rect x="914.0" y="141" width="0.6" height="15.0" fill="rgb(202,53,53)" rx="2" ry="2" />
+<text text-anchor="" x="916.95" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__introsort&lt;std::_ClassicAlgPolicy,.std::ranges::less, (51 samples, 0.61%)</title><rect x="394.2" y="173" width="8.4" height="15.0" fill="rgb(220,220,66)" rx="2" ry="2" />
+<text text-anchor="" x="397.19" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`__srefill0 (1 samples, 0.01%)</title><rect x="263.6" y="109" width="0.1" height="15.0" fill="rgb(211,66,66)" rx="2" ry="2" />
+<text text-anchor="" x="266.55" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`pthread_mutex_lock (2 samples, 0.02%)</title><rect x="294.6" y="109" width="0.3" height="15.0" fill="rgb(213,68,68)" rx="2" ry="2" />
+<text text-anchor="" x="297.61" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`operator.new(unsigned (4 samples, 0.05%)</title><rect x="48.5" y="189" width="0.6" height="15.0" fill="rgb(205,57,57)" rx="2" ry="2" />
+<text text-anchor="" x="51.45" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`main (2,407 samples, 28.66%)</title><rect x="10.7" y="221" width="395.5" height="15.0" fill="rgb(245,115,115)" rx="2" ry="2" />
+<text text-anchor="" x="13.66" y="231.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_replay`main</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::reduce_depth(tickforge::Side,.long (300 samples, 3.57%)</title><rect x="1306.2" y="173" width="49.3" height="15.0" fill="rgb(192,192,56)" rx="2" ry="2" />
+<text text-anchor="" x="1309.19" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tick..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::basic_string&lt;char&gt;::append[abi:nqe210106]&lt;char.const*, (75 samples, 0.89%)</title><rect x="308.4" y="157" width="12.3" height="15.0" fill="rgb(179,179,51)" rx="2" ry="2" />
+<text text-anchor="" x="311.41" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__bitset_partition[abi:nqe210106]&lt;std::_ClassicAlgPolicy,.unsigned (4 samples, 0.05%)</title><rect x="401.3" y="109" width="0.6" height="15.0" fill="rgb(227,227,69)" rx="2" ry="2" />
+<text text-anchor="" x="404.26" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`thread_start (2,982 samples, 35.51%)</title><rect x="406.2" y="237" width="490.0" height="15.0" fill="rgb(247,118,118)" rx="2" ry="2" />
+<text text-anchor="" x="409.19" y="247.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_pthread`thread_start</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (320 samples, 3.81%)</title><rect x="159.7" y="173" width="52.6" height="15.0" fill="rgb(214,70,70)" rx="2" ry="2" />
+<text text-anchor="" x="162.70" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsy..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_vm_deferred_reclamation_buffer_resize (9 samples, 0.11%)</title><rect x="45.3" y="157" width="1.5" height="15.0" fill="rgb(236,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>Thread_706843 (2,982 samples, 35.51%)</title><rect x="406.2" y="253" width="490.0" height="15.0" fill="rgb(212,67,67)" rx="2" ry="2" />
+<text text-anchor="" x="409.19" y="263.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Thread_706843</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$operator.delete(void*) (5 samples, 0.06%)</title><rect x="47.1" y="205" width="0.9" height="15.0" fill="rgb(215,72,72)" rx="2" ry="2" />
+<text text-anchor="" x="50.14" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc (35 samples, 0.42%)</title><rect x="119.4" y="157" width="5.8" height="15.0" fill="rgb(203,55,55)" rx="2" ry="2" />
+<text text-anchor="" x="122.44" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_absolute_time (123 samples, 1.46%)</title><rect x="186.2" y="157" width="20.2" height="15.0" fill="rgb(222,83,83)" rx="2" ry="2" />
+<text text-anchor="" x="189.16" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`DYLD-STUB$$mach_absolute_time (3 samples, 0.04%)</title><rect x="207.2" y="157" width="0.5" height="15.0" fill="rgb(224,85,85)" rx="2" ry="2" />
+<text text-anchor="" x="210.19" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`&lt;deduplicated_symbol&gt; (2 samples, 0.02%)</title><rect x="396.5" y="141" width="0.3" height="15.0" fill="rgb(236,103,103)" rx="2" ry="2" />
+<text text-anchor="" x="399.49" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`fread (192 samples, 2.29%)</title><rect x="263.6" y="141" width="31.5" height="15.0" fill="rgb(228,91,91)" rx="2" ry="2" />
+<text text-anchor="" x="266.55" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`swtch_pri (2,441 samples, 29.07%)</title><rect x="494.4" y="173" width="401.1" height="15.0" fill="rgb(206,60,60)" rx="2" ry="2" />
+<text text-anchor="" x="497.43" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_kernel`swtch_pri</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__bitset_partition[abi:nqe210106]&lt;std::_ClassicAlgPolicy,.unsigned (9 samples, 0.11%)</title><rect x="396.8" y="141" width="1.5" height="15.0" fill="rgb(187,187,54)" rx="2" ry="2" />
+<text text-anchor="" x="399.82" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::add_depth(tickforge::Side,.long (65 samples, 0.77%)</title><rect x="1190.0" y="173" width="10.7" height="15.0" fill="rgb(191,191,56)" rx="2" ry="2" />
+<text text-anchor="" x="1193.02" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`funlockfile (1 samples, 0.01%)</title><rect x="294.9" y="125" width="0.2" height="15.0" fill="rgb(220,80,80)" rx="2" ry="2" />
+<text text-anchor="" x="297.94" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`cthread_yield (2,462 samples, 29.32%)</title><rect x="491.5" y="189" width="404.5" height="15.0" fill="rgb(247,119,119)" rx="2" ry="2" />
+<text text-anchor="" x="494.47" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_pthread`cthread_yield</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::getline[abi:nqe210106]&lt;char&gt;(std::basic_istream&lt;char&gt;&amp;,.std::basic_string&lt;char&gt;&amp;, (3 samples, 0.04%)</title><rect x="52.2" y="189" width="0.5" height="15.0" fill="rgb(228,228,69)" rx="2" ry="2" />
+<text text-anchor="" x="55.23" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::(anonymous.namespace)::parse_uint64(std::basic_string_view&lt;char&gt;, (142 samples, 1.69%)</title><rect x="369.7" y="173" width="23.3" height="15.0" fill="rgb(175,175,50)" rx="2" ry="2" />
+<text text-anchor="" x="372.71" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >t..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::locale(std::locale.const&amp;) (4 samples, 0.05%)</title><rect x="98.1" y="173" width="0.6" height="15.0" fill="rgb(176,176,50)" rx="2" ry="2" />
+<text text-anchor="" x="101.08" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::id::__get() (1 samples, 0.01%)</title><rect x="97.9" y="173" width="0.2" height="15.0" fill="rgb(187,187,54)" rx="2" ry="2" />
+<text text-anchor="" x="100.91" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::basic_istream&lt;char&gt;::sentry::sentry(std::basic_istream&lt;char&gt;&amp;,.bool) (16 samples, 0.19%)</title><rect x="295.1" y="157" width="2.6" height="15.0" fill="rgb(181,181,52)" rx="2" ry="2" />
+<text text-anchor="" x="298.10" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::add_depth(tickforge::Side,.long (5 samples, 0.06%)</title><rect x="1100.3" y="189" width="0.8" height="15.0" fill="rgb(193,193,56)" rx="2" ry="2" />
+<text text-anchor="" x="1103.30" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::chrono::steady_clock::now() (995 samples, 11.85%)</title><rect x="898.7" y="189" width="163.5" height="15.0" fill="rgb(221,221,66)" rx="2" ry="2" />
+<text text-anchor="" x="901.67" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libc++.1`std::chrono:..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::vector&lt;unsigned.long (48 samples, 0.57%)</title><rect x="1092.4" y="173" width="7.9" height="15.0" fill="rgb(175,175,50)" rx="2" ry="2" />
+<text text-anchor="" x="1095.41" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memchr (103 samples, 1.23%)</title><rect x="212.6" y="173" width="16.9" height="15.0" fill="rgb(215,73,73)" rx="2" ry="2" />
+<text text-anchor="" x="215.61" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::locale::id::__get() (7 samples, 0.08%)</title><rect x="99.6" y="157" width="1.1" height="15.0" fill="rgb(223,223,67)" rx="2" ry="2" />
+<text text-anchor="" x="102.56" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_free (2 samples, 0.02%)</title><rect x="1229.3" y="173" width="0.3" height="15.0" fill="rgb(231,95,95)" rx="2" ry="2" />
+<text text-anchor="" x="1232.29" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::reduce_depth(tickforge::Side,.long (283 samples, 3.37%)</title><rect x="1255.7" y="173" width="46.6" height="15.0" fill="rgb(221,221,66)" rx="2" ry="2" />
+<text text-anchor="" x="1258.75" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tick..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::LatencyProfiler::record(unsigned.long (49 samples, 0.58%)</title><rect x="1092.2" y="189" width="8.1" height="15.0" fill="rgb(189,189,55)" rx="2" ry="2" />
+<text text-anchor="" x="1095.24" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_free (51 samples, 0.61%)</title><rect x="151.3" y="173" width="8.4" height="15.0" fill="rgb(252,126,126)" rx="2" ry="2" />
+<text text-anchor="" x="154.32" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`_pthread_start (2,982 samples, 35.51%)</title><rect x="406.2" y="221" width="490.0" height="15.0" fill="rgb(240,108,108)" rx="2" ry="2" />
+<text text-anchor="" x="409.19" y="231.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_pthread`_pthread_start</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::ReplayEngine::replay_max_threaded(std::vector&lt;tickforge::MarketEvent&gt;.const&amp;) (80 samples, 0.95%)</title><rect x="393.0" y="205" width="13.2" height="15.0" fill="rgb(179,179,51)" rx="2" ry="2" />
+<text text-anchor="" x="396.04" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$std::basic_istream&lt;char&gt;::sentry::sentry(std::basic_istream&lt;char&gt;&amp;,.bool) (5 samples, 0.06%)</title><rect x="306.8" y="157" width="0.8" height="15.0" fill="rgb(216,216,64)" rx="2" ry="2" />
+<text text-anchor="" x="309.77" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc_tiny (139 samples, 1.66%)</title><rect x="125.2" y="157" width="22.8" height="15.0" fill="rgb(210,64,64)" rx="2" ry="2" />
+<text text-anchor="" x="128.19" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >l..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`xzm_reclaim_mark_free_locked (11 samples, 0.13%)</title><rect x="45.3" y="189" width="1.8" height="15.0" fill="rgb(233,98,98)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`clock_gettime_nsec_np (922 samples, 10.98%)</title><rect x="909.8" y="157" width="151.6" height="15.0" fill="rgb(235,101,101)" rx="2" ry="2" />
+<text text-anchor="" x="912.84" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_c`clock_g..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__thread_proxy[abi:nqe210106]&lt;std::tuple&lt;std::unique_ptr&lt;std::__thread_struct&gt;,.tickforge::ReplayEngine::replay_max_threaded(std::vector&lt;tickforge::MarketEvent&gt; (2,982 samples, 35.51%)</title><rect x="406.2" y="205" width="490.0" height="15.0" fill="rgb(179,179,51)" rx="2" ry="2" />
+<text text-anchor="" x="409.19" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_replay`std::__thread_proxy[abi:nqe210106]&lt;std::tuple&lt;std:..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$operator.delete(void*) (1 samples, 0.01%)</title><rect x="1247.5" y="173" width="0.2" height="15.0" fill="rgb(231,96,96)" rx="2" ry="2" />
+<text text-anchor="" x="1250.53" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__hash_table&lt;std::__hash_value_type&lt;unsigned.long (49 samples, 0.58%)</title><rect x="1247.7" y="173" width="8.0" height="15.0" fill="rgb(182,182,52)" rx="2" ry="2" />
+<text text-anchor="" x="1250.69" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`pthread_once (1 samples, 0.01%)</title><rect x="294.3" y="109" width="0.1" height="15.0" fill="rgb(236,103,103)" rx="2" ry="2" />
+<text text-anchor="" x="297.28" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>all (8,398 samples, 100%)</title><rect x="10.0" y="269" width="1380.0" height="15.0" fill="rgb(211,66,66)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="279.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::apply_event(tickforge::MarketEvent.const&amp;) (3 samples, 0.04%)</title><rect x="1389.3" y="205" width="0.5" height="15.0" fill="rgb(191,191,56)" rx="2" ry="2" />
+<text text-anchor="" x="1392.34" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::ios_base::clear(unsigned.int) (6 samples, 0.07%)</title><rect x="297.7" y="157" width="1.0" height="15.0" fill="rgb(195,195,57)" rx="2" ry="2" />
+<text text-anchor="" x="300.73" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$operator.delete(void*) (14 samples, 0.17%)</title><rect x="238.2" y="173" width="2.3" height="15.0" fill="rgb(244,114,114)" rx="2" ry="2" />
+<text text-anchor="" x="241.25" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memmove (39 samples, 0.46%)</title><rect x="229.5" y="173" width="6.4" height="15.0" fill="rgb(251,125,125)" rx="2" ry="2" />
+<text text-anchor="" x="232.54" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$std::ios_base::clear(unsigned.int) (5 samples, 0.06%)</title><rect x="307.6" y="157" width="0.8" height="15.0" fill="rgb(184,184,53)" rx="2" ry="2" />
+<text text-anchor="" x="310.59" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`&lt;deduplicated_symbol&gt; (59 samples, 0.70%)</title><rect x="109.7" y="157" width="9.7" height="15.0" fill="rgb(235,101,101)" rx="2" ry="2" />
+<text text-anchor="" x="112.75" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__from_chars_atoi[abi:nqe210106]&lt;long.long, (105 samples, 1.25%)</title><rect x="240.9" y="173" width="17.2" height="15.0" fill="rgb(226,226,68)" rx="2" ry="2" />
+<text text-anchor="" x="243.88" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`_platform_memset (23 samples, 0.27%)</title><rect x="208.5" y="157" width="3.8" height="15.0" fill="rgb(253,128,128)" rx="2" ry="2" />
+<text text-anchor="" x="211.50" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc_from_freelist_chunk (1 samples, 0.01%)</title><rect x="1137.3" y="125" width="0.1" height="15.0" fill="rgb(208,63,63)" rx="2" ry="2" />
+<text text-anchor="" x="1140.27" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (13 samples, 0.15%)</title><rect x="49.1" y="189" width="2.1" height="15.0" fill="rgb(210,65,65)" rx="2" ry="2" />
+<text text-anchor="" x="52.11" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::cancel_order(tickforge::MarketEvent.const&amp;) (618 samples, 7.36%)</title><rect x="1200.7" y="189" width="101.6" height="15.0" fill="rgb(201,201,59)" rx="2" ry="2" />
+<text text-anchor="" x="1203.70" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_re..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (88 samples, 1.05%)</title><rect x="1233.1" y="173" width="14.4" height="15.0" fill="rgb(229,92,92)" rx="2" ry="2" />
+<text text-anchor="" x="1236.07" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::basic_filebuf&lt;char&gt;::underflow() (192 samples, 2.29%)</title><rect x="263.6" y="157" width="31.5" height="15.0" fill="rgb(175,175,50)" rx="2" ry="2" />
+<text text-anchor="" x="266.55" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__introsort&lt;std::_ClassicAlgPolicy,.std::ranges::less, (26 samples, 0.31%)</title><rect x="398.3" y="141" width="4.3" height="15.0" fill="rgb(189,189,55)" rx="2" ry="2" />
+<text text-anchor="" x="401.30" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$memchr (10 samples, 0.12%)</title><rect x="235.9" y="173" width="1.7" height="15.0" fill="rgb(252,125,125)" rx="2" ry="2" />
+<text text-anchor="" x="238.95" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`operator.new(unsigned (278 samples, 3.31%)</title><rect x="105.6" y="173" width="45.7" height="15.0" fill="rgb(215,72,72)" rx="2" ry="2" />
+<text text-anchor="" x="108.64" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libc..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_continuous_time (881 samples, 10.49%)</title><rect x="914.6" y="141" width="144.8" height="15.0" fill="rgb(231,96,96)" rx="2" ry="2" />
+<text text-anchor="" x="917.61" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_kernel`m..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::trade_order(tickforge::MarketEvent.const&amp;) (205 samples, 2.44%)</title><rect x="1355.7" y="189" width="33.6" height="15.0" fill="rgb(225,225,68)" rx="2" ry="2" />
+<text text-anchor="" x="1358.66" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >ti..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__hash_table&lt;std::__hash_value_type&lt;unsigned.long (11 samples, 0.13%)</title><rect x="1062.7" y="189" width="1.8" height="15.0" fill="rgb(185,185,53)" rx="2" ry="2" />
+<text text-anchor="" x="1065.66" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`DYLD-STUB$$malloc_type_malloc (1 samples, 0.01%)</title><rect x="1119.7" y="141" width="0.1" height="15.0" fill="rgb(232,97,97)" rx="2" ry="2" />
+<text text-anchor="" x="1122.69" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`DYLD-STUB$$swtch_pri (3 samples, 0.04%)</title><rect x="895.5" y="173" width="0.5" height="15.0" fill="rgb(208,61,61)" rx="2" ry="2" />
+<text text-anchor="" x="898.55" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc (7 samples, 0.08%)</title><rect x="1120.7" y="141" width="1.1" height="15.0" fill="rgb(206,58,58)" rx="2" ry="2" />
+<text text-anchor="" x="1123.67" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__thread_proxy[abi:nqe210106]&lt;std::tuple&lt;std::unique_ptr&lt;std::__thread_struct&gt;,.tickforge::ReplayEngine::replay_max_threaded(std::vector&lt;tickforge::MarketEvent&gt; (169 samples, 2.01%)</title><rect x="1064.5" y="189" width="27.7" height="15.0" fill="rgb(209,209,62)" rx="2" ry="2" />
+<text text-anchor="" x="1067.47" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >t..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`__bzero (5 samples, 0.06%)</title><rect x="207.7" y="157" width="0.8" height="15.0" fill="rgb(248,120,120)" rx="2" ry="2" />
+<text text-anchor="" x="210.68" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$memmove (5 samples, 0.06%)</title><rect x="319.9" y="141" width="0.8" height="15.0" fill="rgb(242,111,111)" rx="2" ry="2" />
+<text text-anchor="" x="322.92" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_absolute_time (2 samples, 0.02%)</title><rect x="46.8" y="157" width="0.3" height="15.0" fill="rgb(229,92,92)" rx="2" ry="2" />
+<text text-anchor="" x="49.81" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::ctype&lt;char&gt;::do_widen(char).const (2 samples, 0.02%)</title><rect x="97.6" y="173" width="0.3" height="15.0" fill="rgb(200,200,59)" rx="2" ry="2" />
+<text text-anchor="" x="100.59" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::modify_order(tickforge::MarketEvent.const&amp;) (324 samples, 3.86%)</title><rect x="1302.3" y="189" width="53.2" height="15.0" fill="rgb(215,215,64)" rx="2" ry="2" />
+<text text-anchor="" x="1305.25" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickf..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::trade_order(tickforge::MarketEvent.const&amp;) (1 samples, 0.01%)</title><rect x="1389.8" y="205" width="0.2" height="15.0" fill="rgb(216,216,65)" rx="2" ry="2" />
+<text text-anchor="" x="1392.84" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_malloc_from_freelist_chunk (26 samples, 0.31%)</title><rect x="1132.5" y="109" width="4.3" height="15.0" fill="rgb(212,68,68)" rx="2" ry="2" />
+<text text-anchor="" x="1135.50" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`__fread (188 samples, 2.24%)</title><rect x="263.6" y="125" width="30.8" height="15.0" fill="rgb(229,92,92)" rx="2" ry="2" />
+<text text-anchor="" x="266.55" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_pthread`thread_start (3,005 samples, 35.78%)</title><rect x="896.2" y="237" width="493.8" height="15.0" fill="rgb(220,79,79)" rx="2" ry="2" />
+<text text-anchor="" x="899.20" y="247.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >libsystem_pthread`thread_start</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_vm_reclaim_try_enter (2 samples, 0.02%)</title><rect x="46.8" y="173" width="0.3" height="15.0" fill="rgb(230,94,94)" rx="2" ry="2" />
+<text text-anchor="" x="49.81" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`DYLD-STUB$$_platform_bzero (4 samples, 0.05%)</title><rect x="1246.7" y="157" width="0.7" height="15.0" fill="rgb(206,60,60)" rx="2" ry="2" />
+<text text-anchor="" x="1249.71" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::(anonymous.namespace)::parse_uint64(std::basic_string_view&lt;char&gt;, (4 samples, 0.05%)</title><rect x="53.7" y="189" width="0.7" height="15.0" fill="rgb(211,211,63)" rx="2" ry="2" />
+<text text-anchor="" x="56.71" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__thread_proxy[abi:nqe210106]&lt;std::tuple&lt;std::unique_ptr&lt;std::__thread_struct&gt;,.tickforge::ReplayEngine::replay_max_threaded(std::vector&lt;tickforge::MarketEvent&gt; (3,001 samples, 35.73%)</title><rect x="896.2" y="205" width="493.1" height="15.0" fill="rgb(218,218,65)" rx="2" ry="2" />
+<text text-anchor="" x="899.20" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tickforge_replay`std::__thread_proxy[abi:nqe210106]&lt;std::tuple&lt;std:..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`__read_nocancel (178 samples, 2.12%)</title><rect x="263.7" y="61" width="29.3" height="15.0" fill="rgb(230,94,94)" rx="2" ry="2" />
+<text text-anchor="" x="266.72" y="71.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::vector&lt;tickforge::MarketEvent&gt;::push_back[abi:nqe210106](tickforge::MarketEvent.const&amp;) (298 samples, 3.55%)</title><rect x="320.7" y="173" width="49.0" height="15.0" fill="rgb(192,192,56)" rx="2" ry="2" />
+<text text-anchor="" x="323.74" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tick..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$std::chrono::steady_clock::now() (3 samples, 0.04%)</title><rect x="1062.2" y="189" width="0.5" height="15.0" fill="rgb(208,208,62)" rx="2" ry="2" />
+<text text-anchor="" x="1065.17" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_free (10 samples, 0.12%)</title><rect x="11.0" y="205" width="1.6" height="15.0" fill="rgb(235,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="13.99" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_vm_reclaim_ring_resize (9 samples, 0.11%)</title><rect x="45.3" y="173" width="1.5" height="15.0" fill="rgb(233,99,99)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`__bzero (1 samples, 0.01%)</title><rect x="406.0" y="173" width="0.2" height="15.0" fill="rgb(219,78,78)" rx="2" ry="2" />
+<text text-anchor="" x="409.02" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::__bitset_partition[abi:nqe210106]&lt;std::_ClassicAlgPolicy,.unsigned (1 samples, 0.01%)</title><rect x="402.4" y="93" width="0.2" height="15.0" fill="rgb(223,223,67)" rx="2" ry="2" />
+<text text-anchor="" x="405.41" y="103.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_chunk_list_pop (4 samples, 0.05%)</title><rect x="1131.7" y="109" width="0.6" height="15.0" fill="rgb(251,124,124)" rx="2" ry="2" />
+<text text-anchor="" x="1134.68" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::reduce_depth(tickforge::Side,.long (1 samples, 0.01%)</title><rect x="1355.5" y="189" width="0.2" height="15.0" fill="rgb(212,212,63)" rx="2" ry="2" />
+<text text-anchor="" x="1358.49" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`__sread (178 samples, 2.12%)</title><rect x="263.7" y="77" width="29.3" height="15.0" fill="rgb(250,124,124)" rx="2" ry="2" />
+<text text-anchor="" x="266.72" y="87.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >li..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++abi`operator.new(unsigned (136 samples, 1.62%)</title><rect x="1119.5" y="157" width="22.4" height="15.0" fill="rgb(207,61,61)" rx="2" ry="2" />
+<text text-anchor="" x="1122.52" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >l..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`free (2 samples, 0.02%)</title><rect x="212.3" y="173" width="0.3" height="15.0" fill="rgb(251,125,125)" rx="2" ry="2" />
+<text text-anchor="" x="215.28" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_chunk_list_slot_push (3 samples, 0.04%)</title><rect x="1387.9" y="157" width="0.5" height="15.0" fill="rgb(216,73,73)" rx="2" ry="2" />
+<text text-anchor="" x="1390.86" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`xzm_segment_group_alloc_chunk (3 samples, 0.04%)</title><rect x="1136.8" y="109" width="0.5" height="15.0" fill="rgb(247,119,119)" rx="2" ry="2" />
+<text text-anchor="" x="1139.78" y="119.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`DYLD-STUB$$memcpy (4 samples, 0.05%)</title><rect x="237.6" y="173" width="0.6" height="15.0" fill="rgb(236,102,102)" rx="2" ry="2" />
+<text text-anchor="" x="240.59" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`std::__hash_table&lt;std::__hash_value_type&lt;unsigned.long (2 samples, 0.02%)</title><rect x="1388.7" y="157" width="0.3" height="15.0" fill="rgb(176,176,50)" rx="2" ry="2" />
+<text text-anchor="" x="1391.69" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`xzm_malloc_zone_malloc_type_malloc (1 samples, 0.01%)</title><rect x="1141.7" y="141" width="0.2" height="15.0" fill="rgb(212,68,68)" rx="2" ry="2" />
+<text text-anchor="" x="1144.71" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::modify_order(tickforge::MarketEvent.const&amp;) (1 samples, 0.01%)</title><rect x="1306.0" y="173" width="0.2" height="15.0" fill="rgb(209,209,62)" rx="2" ry="2" />
+<text text-anchor="" x="1309.03" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_kernel`mach_msg2_internal (9 samples, 0.11%)</title><rect x="45.3" y="141" width="1.5" height="15.0" fill="rgb(249,122,122)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::OrderBook::reduce_depth(tickforge::Side,.long (2 samples, 0.02%)</title><rect x="1389.0" y="173" width="0.3" height="15.0" fill="rgb(226,226,68)" rx="2" ry="2" />
+<text text-anchor="" x="1392.01" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`DYLD-STUB$$mach_continuous_time (5 samples, 0.06%)</title><rect x="913.1" y="141" width="0.9" height="15.0" fill="rgb(227,89,89)" rx="2" ry="2" />
+<text text-anchor="" x="916.13" y="151.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tickforge_replay`tickforge::SpscRingBuffer&lt;tickforge::MarketEvent&gt;::SpscRingBuffer(unsigned.long) (1 samples, 0.01%)</title><rect x="406.0" y="189" width="0.2" height="15.0" fill="rgb(190,190,55)" rx="2" ry="2" />
+<text text-anchor="" x="409.02" y="199.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_madvise_batch (11 samples, 0.13%)</title><rect x="45.3" y="205" width="1.8" height="15.0" fill="rgb(210,64,64)" rx="2" ry="2" />
+<text text-anchor="" x="48.33" y="215.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libc++.1`std::basic_istream&lt;char&gt;::sentry::sentry(std::basic_istream&lt;char&gt;&amp;,.bool) (37 samples, 0.44%)</title><rect x="91.5" y="173" width="6.1" height="15.0" fill="rgb(182,182,52)" rx="2" ry="2" />
+<text text-anchor="" x="94.51" y="183.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_free (2 samples, 0.02%)</title><rect x="1388.4" y="157" width="0.3" height="15.0" fill="rgb(247,118,118)" rx="2" ry="2" />
+<text text-anchor="" x="1391.36" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_malloc`_xzm_xzone_find_and_malloc_from_freelist_chunk (39 samples, 0.46%)</title><rect x="1130.9" y="125" width="6.4" height="15.0" fill="rgb(225,87,87)" rx="2" ry="2" />
+<text text-anchor="" x="1133.86" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_c`flockfile (3 samples, 0.04%)</title><rect x="294.4" y="125" width="0.5" height="15.0" fill="rgb(223,84,84)" rx="2" ry="2" />
+<text text-anchor="" x="297.45" y="135.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>libsystem_platform`__bzero (1 samples, 0.01%)</title><rect x="1247.4" y="157" width="0.1" height="15.0" fill="rgb(245,116,116)" rx="2" ry="2" />
+<text text-anchor="" x="1250.37" y="167.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+</svg>
