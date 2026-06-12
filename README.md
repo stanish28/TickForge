@@ -24,11 +24,16 @@ All numbers below are medians across 3 runs of `tickforge_bench --events 1000000
 
 One producer thread, one consumer thread, `MarketEvent` payload, FIFO + count validated internally so a broken queue cannot report a fake win.
 
-| Implementation       | Events / sec | Time (1M events) |
-| -------------------- | -----------: | ---------------: |
-| SPSC Ring Buffer     |    61.1 M    |     16.4 ms      |
-| Mutex + condvar      |    25.8 M    |     38.8 ms      |
-| **Speedup**          | **2.35×**    | (range across runs: 1.57× – 3.09×) |
+The **uncontended** ring cost is stable and is the number to trust: `spsc.push_pop` runs at **~600 M ops/sec (≈1.66 ns/op)** single-threaded (see the microbenchmark table above).
+
+The **cross-thread** speedup vs a mutex queue is real but high-variance on this machine, because macOS does not expose thread-to-core pinning and the M2's producer/consumer threads are scheduled across performance and efficiency cores differently on each run. Across 10 back-to-back runs:
+
+| Statistic            | SPSC vs mutex speedup |
+| -------------------- | --------------------: |
+| Median               | **2.4×**              |
+| Range (min – max)    | 0.75× – 6.23×         |
+
+Treat the median as indicative, not a guarantee. On Linux with `pthread_setaffinity_np` pinning the producer and consumer to dedicated cores, this benchmark would be far more stable — that is tracked as future work. The honest single-number takeaway is the **stable ~600 M ops/sec uncontended ring throughput**, not a fixed cross-thread multiple.
 
 ### Per-event replay latency (`tickforge_replay`, 1M synthetic events)
 
@@ -327,6 +332,6 @@ Full-day reconstruction would require LOBSTER's "all levels" paid subscription, 
 Numbers below are the measured medians from a 3-run benchmark on an Apple M2; substitute your own machine's numbers when re-running.
 
 - Built a deterministic C++20 market-data replay engine that reconstructs limit-order-book state from timestamped events. **Validated against real NASDAQ AAPL data (LOBSTER, 2012-06-21): reconstructed top-10 matches LOBSTER's published opening snapshot 0/10 bid + 0/10 ask mismatches.** Throughput on real data: ~13 M events / sec, **p50 = 42 ns, p95 = 84 ns, p99 = 125 ns** per-event consumer latency over 389k events.
-- Implemented a templated cache-line-aligned **SPSC ring buffer** with acquire/release atomics and benchmarked it against a `std::mutex + std::queue + std::condition_variable` baseline — **2.35× throughput speedup** on a two-thread `MarketEvent` handoff, FIFO and count validated.
+- Implemented a templated cache-line-aligned **SPSC ring buffer** with acquire/release atomics sustaining **~600 M uncontended push/pop ops/sec (≈1.66 ns/op)**, and benchmarked a two-thread handoff against a `std::mutex + std::queue + std::condition_variable` baseline (FIFO and count validated; cross-thread speedup median ~2.4× but high-variance without core pinning).
 - Wired the replay engine as a true producer/consumer pipeline over the SPSC queue and verified deterministic output across runs with 22 GoogleTest cases, including cross-thread determinism, 100k-event concurrent FIFO, and orphan-event level-reduction fallbacks for exchange feeds referencing pre-session resting orders.
 - Profiled the hot path with a per-event nanosecond profiler (min / max / mean / p50 / p95 / p99 / throughput) and a captured `samply` flame-graph trace ([reports/profile.json.gz](reports/profile.json.gz)) for further `std::map` → flat-array optimization work.

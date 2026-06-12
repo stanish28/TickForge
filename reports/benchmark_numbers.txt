@@ -24,9 +24,13 @@ spsc.push_pop (single-thread) 1.60 ns/op    626.7 M ops/sec
 replay.max_pipeline (2-thread) 65.14 ns/op   15.4 M events/sec
 
 Queue handoff (1 producer + 1 consumer, MarketEvent payload)
-SPSC Ring Buffer             61.1 M events/sec
-Mutex Queue                  25.8 M events/sec
-Speedup                      2.35x   (range across 3 runs: 1.57x – 3.09x)
+  Uncontended ring (spsc.push_pop, single-thread): ~600 M ops/sec, ~1.66 ns/op  [STABLE]
+  Cross-thread SPSC vs mutex queue speedup: median 2.4x, range 0.75x-6.23x over 10 runs  [HIGH VARIANCE]
+    Variance cause: macOS gives no thread-to-core pinning, so on the M2 the
+    producer/consumer threads land on different performance/efficiency cores
+    each run. Do NOT quote a fixed multiple. The trustworthy number here is the
+    uncontended ~600 M ops/sec ring throughput. Linux + pthread_setaffinity_np
+    pinning would stabilize this (future work).
 
 tickforge_replay on 1M synthetic events (medians)
 -------------------------------------------------
@@ -43,9 +47,10 @@ end-to-end throughput     ~8.3 M events/sec
 
 Numbers to put on the resume
 ----------------------------
-- Order book: ~31 M apply_event ops/sec on an Apple M2
-- SPSC ring buffer vs std::mutex+std::queue baseline: ~2.4x speedup
-  (1 producer + 1 consumer, MarketEvent payload, FIFO validated)
+- Order book: ~31 M apply_event ops/sec on an Apple M2 (quiet machine; ~20 M under load)
+- SPSC ring buffer: ~600 M uncontended push/pop ops/sec (~1.66 ns/op) -- STABLE number
+  Cross-thread vs std::mutex+std::queue: median ~2.4x but high-variance
+  (no core pinning on macOS); do not headline a fixed multiple.
 - Replay pipeline: p50=42 ns / p95=292 ns / p99=458 ns per event,
   ~8 M events/sec end-to-end, ~15 M events/sec in-memory hot path
 - All numbers measured on macOS arm64 with Apple clang -O3, median of 3 runs

@@ -8,6 +8,9 @@ reports/*
 !reports/profile.json.gz
 !reports/profile.json.syms.json
 !reports/flame.svg
+!reports/flame.png
+!reports/validation_hero.svg
+!reports/validation_hero.png
 !reports/aapl_2012-06-21_findings.md
 !reports/aapl_2012-06-21_validation.txt
 

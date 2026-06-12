@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <rect width="1200" height="675" fill="#0d1117"/>
+  <rect x="0" y="0" width="1200" height="6" fill="#2f81f7"/>
+
+  <!-- window chrome -->
+  <circle cx="40" cy="46" r="7" fill="#ff5f56"/>
+  <circle cx="64" cy="46" r="7" fill="#ffbd2e"/>
+  <circle cx="88" cy="46" r="7" fill="#27c93f"/>
+  <text x="120" y="51" font-family="Menlo, monospace" font-size="18" fill="#8b949e">validate_lobster_replay.py — TickForge</text>
+
+  <!-- title -->
+  <text x="48" y="118" font-family="Menlo, monospace" font-size="30" fill="#e6edf3" font-weight="bold">TickForge vs LOBSTER — Correctness Validation</text>
+  <text x="48" y="152" font-family="Menlo, monospace" font-size="18" fill="#8b949e">Replaying real NASDAQ AAPL order-book data (LOBSTER academic sample, 2012-06-21)</text>
+
+  <!-- Check 1 card -->
+  <rect x="48" y="182" width="1104" height="150" rx="10" fill="#161b22" stroke="#27c93f" stroke-width="2"/>
+  <text x="72" y="222" font-family="Menlo, monospace" font-size="20" fill="#e6edf3">Check 1 — reconstructed book vs LOBSTER's published opening snapshot</text>
+
+  <text x="72" y="276" font-family="Menlo, monospace" font-size="44" fill="#27c93f" font-weight="bold">bid 0 / 10</text>
+  <text x="360" y="276" font-family="Menlo, monospace" font-size="44" fill="#27c93f" font-weight="bold">ask 0 / 10</text>
+  <text x="660" y="276" font-family="Menlo, monospace" font-size="44" fill="#8b949e">mismatches</text>
+
+  <text x="72" y="312" font-family="Menlo, monospace" font-size="20" fill="#27c93f" font-weight="bold">PASS</text>
+  <text x="140" y="312" font-family="Menlo, monospace" font-size="20" fill="#8b949e">— engine and adapter reconstruct the book exactly.</text>
+
+  <!-- stat band -->
+  <text x="48" y="388" font-family="Menlo, monospace" font-size="20" fill="#e6edf3">Replay performance on the full session (389,078 events):</text>
+
+  <rect x="48"  y="408" width="352" height="118" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <rect x="424" y="408" width="352" height="118" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <rect x="800" y="408" width="352" height="118" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+
+  <text x="72"  y="448" font-family="Menlo, monospace" font-size="17" fill="#8b949e">per-event latency</text>
+  <text x="72"  y="492" font-family="Menlo, monospace" font-size="30" fill="#2f81f7" font-weight="bold">42 / 84 / 125 ns</text>
+  <text x="72"  y="514" font-family="Menlo, monospace" font-size="15" fill="#8b949e">p50 / p95 / p99</text>
+
+  <text x="448" y="448" font-family="Menlo, monospace" font-size="17" fill="#8b949e">throughput</text>
+  <text x="448" y="492" font-family="Menlo, monospace" font-size="30" fill="#2f81f7" font-weight="bold">~12 M ev/sec</text>
+  <text x="448" y="514" font-family="Menlo, monospace" font-size="15" fill="#8b949e">real market data, single core</text>
+
+  <text x="824" y="448" font-family="Menlo, monospace" font-size="17" fill="#8b949e">pipeline</text>
+  <text x="824" y="492" font-family="Menlo, monospace" font-size="30" fill="#2f81f7" font-weight="bold">lock-free SPSC</text>
+  <text x="824" y="514" font-family="Menlo, monospace" font-size="15" fill="#8b949e">2-thread producer / consumer</text>
+
+  <!-- honesty footnote -->
+  <text x="48" y="576" font-family="Menlo, monospace" font-size="15" fill="#6e7681">Note: end-of-session top-of-book diverges by design — a level-10 feed omits events that leave the top 10, a documented</text>
+  <text x="48" y="598" font-family="Menlo, monospace" font-size="15" fill="#6e7681">LOBSTER characteristic, not an engine bug. Correctness is proven against the snapshot the data fully describes (the open).</text>
+
+  <!-- repo -->
+  <text x="48" y="646" font-family="Menlo, monospace" font-size="18" fill="#8b949e">github.com/stanish28/TickForge</text>
+  <text x="1152" y="646" text-anchor="end" font-family="Menlo, monospace" font-size="16" fill="#6e7681">C++20 · clone &amp; run · 22/22 tests green</text>
+</svg>
